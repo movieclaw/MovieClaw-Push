@@ -24,13 +24,15 @@ MovieClaw 的推送中继：把 MovieClaw 实例发来的**密文**推送转发�
 2. 启动（Docker）：
 
    ```bash
-   docker build -t movieclaw-push .
    docker run -d --name movieclaw-push -p 8080:8080 \
      -v $PWD/config.yaml:/etc/movieclaw-push/config.yaml:ro \
      -v $PWD/AuthKey_XXXXXXXXXX.p8:/etc/movieclaw-push/AuthKey_XXXXXXXXXX.p8:ro \
      -v movieclaw-push-data:/data \
-     movieclaw-push
+     ghcr.io/movieclaw/movieclaw-push:0.1
    ```
+
+   镜像支持 amd64 和 arm64，版本见 [Releases](https://github.com/movieclaw/MovieClaw-Push/releases)；`0.1` 跟随 0.1.x 的修复版本，
+   要固定版本就写完整的 `0.1.0`。也可以从源码构建：`docker build -t movieclaw-push .`。
 
    配置里 `data_dir` 写 `/data`，`apns.keys[].file` 写 `./AuthKey_XXXXXXXXXX.p8`（相对配置文件所在目录）。
    也可以直接用二进制：`go install github.com/movieclaw/movieclaw-push/cmd/movieclaw-push@latest`，然后 `movieclaw-push -config config.yaml`。
