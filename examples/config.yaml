@@ -1,0 +1,39 @@
+# movieclaw-push 自建部署示例（自签 App 用户）。
+#
+# 适用于用自己的开发者账号和 Bundle ID 打包 App 的用户：中继自己发令牌（static），
+# 推送用你自己的 .p8 密钥。官方部署的写法见 config.official.yaml。
+#
+# 相对路径都相对于这个文件所在的目录。
+
+# HTTP 监听地址。TLS 交给前面的反向代理（Caddy、nginx……）。
+listen: ":8080"
+
+# 中继的固定标识。static 鉴权用不到它，写上你给实例配置的中继地址即可。
+aud: https://push.example.com
+
+# 计数文件（usage.db）、令牌文件（tokens.json）放在这里。
+data_dir: ./data
+
+apns:
+  # 苹果开发者后台 → Certificates, Identifiers & Profiles → Keys 下载的 .p8。
+  # 可以挂多把：第一把优先，被苹果拒绝时自动换下一把，换密钥时推送不中断。
+  keys:
+    - team_id: ABCDE12345
+      key_id: XYZ987WVUT
+      file: ./AuthKey_XYZ987WVUT.p8
+  # 你自己打包的 App 的 Bundle ID。
+  topics: [com.example.movieclaw.app]
+  # 开放的推送类型。alert 是普通通知；background、liveactivity、widgets 等 App 支持后再开。
+  types: [alert]
+
+auth:
+  # 令牌用 movieclaw-push token create --name 客厅服务器 创建，填进实例的推送中继设置。
+  mode: static
+
+# 默认限额。负数表示不限。
+limits:
+  day: 5000        # 每个令牌每天
+  device_day: 500  # 每台设备每天（覆盖所有令牌）
+
+log:
+  level: info

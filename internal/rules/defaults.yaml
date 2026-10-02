@@ -1,0 +1,56 @@
+# 内置的推送类型规则表。
+#
+# 每种推送类型一行：topic 后缀、允许的优先级（第一个是默认值）、能不能带 payload、
+# 强制加进 aps 的字段、实例可以填写的 aps 字段及取值规则。配置文件里的 apns.rules
+# 可以追加新类型或整行覆盖同名类型；开放哪些类型由 apns.types 决定。
+#
+# 字段规则（kind）：
+#   uint           非负整数
+#   timestamp      正整数，Unix 秒
+#   range          数字，介于 min 和 max 之间
+#   enum           字符串，只能是 values 里的一个
+#   sealed         只能是 {"e": "<密文>"}，密文是不透明字符串
+#   const          只能等于配置里的 apns.attributes_type
+#   generic_alert  只能是 true，中继替换成通用文案 {"title", "body", "sound"}
+# required: true 表示必须出现。
+
+- type: alert
+  priorities: [10, 5, 1]
+  payload: optional
+  # 带 payload 时加通用文案和 mutable-content: 1，通知扩展解密后替换
+  generic_alert: true
+  fields:
+    badge: {kind: uint}
+    sound: {kind: enum, values: [default]}
+    interruption-level: {kind: enum, values: [passive, active, time-sensitive]}
+    relevance-score: {kind: range, min: 0, max: 1}
+
+- type: background
+  priorities: [5]
+  payload: optional
+  force:
+    content-available: 1
+  fields: {}
+
+- type: liveactivity
+  topic_suffix: .push-type.liveactivity
+  priorities: [10, 5]
+  payload: forbidden
+  fields:
+    timestamp: {kind: timestamp, required: true}
+    event: {kind: enum, values: [start, update, end], required: true}
+    stale-date: {kind: timestamp}
+    dismissal-date: {kind: timestamp}
+    relevance-score: {kind: range, min: 0, max: 1}
+    content-state: {kind: sealed}
+    attributes-type: {kind: const}
+    attributes: {kind: sealed}
+    alert: {kind: generic_alert}
+
+- type: widgets
+  topic_suffix: .push-type.widgets
+  priorities: [5, 10]
+  payload: forbidden
+  force:
+    content-changed: true
+  fields: {}
