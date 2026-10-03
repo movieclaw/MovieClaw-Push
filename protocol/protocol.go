@@ -55,6 +55,8 @@ const (
 	ErrUnauthorized    = "unauthorized"
 	ErrForbidden       = "forbidden"
 	ErrInternal        = "internal"
+	// ErrUnavailable 是中继暂时没法核实凭证（比如它依赖的服务连不上），实例稍后重试即可。
+	ErrUnavailable = "unavailable"
 )
 
 // Message 是实例发来的一条推送，格式见 docs/protocol.md「推送消息」（v1，定下后不再改）。
