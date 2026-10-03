@@ -105,6 +105,9 @@ func serve(configPath string) error {
 		return err
 	}
 	log := newLogger(cfg.Log.Level)
+	if cfg.Admin != nil {
+		log.Warn("管理接口 /admin/v1/usage 已经去掉，配置里的 admin 不再起作用，可以删掉；查计数用 movieclaw-push usage")
+	}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("创建数据目录失败：%w", err)
 	}

@@ -38,6 +38,8 @@ type Config struct {
 	// Limits 是限额（day：每个令牌每天，device_day：每台设备每天）。负数表示不限。
 	Limits map[string]int64 `yaml:"limits"`
 	Log    Log              `yaml:"log"`
+	// Admin 是已经去掉的管理接口的配置。只为老配置文件还能加载，启动时提示可以删掉。
+	Admin map[string]any `yaml:"admin"`
 }
 
 // APNs 是苹果推送相关的配置。
