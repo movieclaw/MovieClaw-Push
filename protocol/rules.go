@@ -1,13 +1,13 @@
-// Package rules 是推送类型规则表和 aps 允许清单。
+package protocol
+
+// 推送类型规则表和 aps 允许清单。
 //
-// APNs 有 12 种推送类型，每种的 topic 后缀、优先级规则、负载字段都不同。中继把这些差异
-// 写成一张表（内置的 defaults.yaml + 配置里的 apns.rules），加新类型只是加一行配置，
-// 不改协议。
+// APNs 有 12 种推送类型，每种的 topic 后缀、优先级规则、负载字段都不同。这些差异写成
+// 一张表（内置的 defaults.yaml + 中继配置里追加的规则），加新类型只是加一行配置，不改协议。
 //
 // 这里也是「中继只看得到密文」这条承诺的执行点：实例发来的 aps 只能包含表里允许的
 // 控制类字段，任何能看出语义的文字（alert 下的文字、thread-id、category……）一律拒绝；
 // 需要文案的地方由中继填通用文案，通知扩展解密后再替换。
-package rules
 
 import (
 	"bytes"
@@ -26,16 +26,6 @@ import (
 
 //go:embed defaults.yaml
 var defaultsYAML []byte
-
-// MaxPayloadBytes 是最终发给苹果的 JSON 的上限（APNs 对普通推送的限制）。
-const MaxPayloadBytes = 4096
-
-// 规则检查失败时的结果码，和 docs/protocol.md「结果与错误」一致。
-const (
-	ResultInvalidAPS     = "invalid_aps"
-	ResultInvalidMessage = "invalid_message"
-	ResultTooLarge       = "payload_too_large"
-)
 
 // opaque 匹配不透明值：只有 base64url 字符和点。payload 与 sealed 字段里的密文都必须是它，
 // 这样明文 JSON、中文文案之类的东西根本塞不进来。
@@ -101,14 +91,21 @@ func (r *Rule) check() error {
 	return nil
 }
 
-// Options 是规则表用到的配置值。
+// Options 是规则表用到的配置值，留空的用默认值。
 type Options struct {
-	// AlertTitle、AlertBody 是中继替实例填的通用文案。
+	// AlertTitle、AlertBody 是中继替实例填的通用文案，默认「MovieClaw」「你有一条新通知」。
 	AlertTitle string
 	AlertBody  string
-	// AttributesType 是实时活动统一使用的、不带语义的 attributes-type。
+	// AttributesType 是实时活动统一使用的、不带语义的 attributes-type，默认 SealedActivityAttributes。
 	AttributesType string
 }
+
+// 通用文案和实时活动类型名的默认值。
+const (
+	DefaultAlertTitle     = "MovieClaw"
+	DefaultAlertBody      = "你有一条新通知"
+	DefaultAttributesType = "SealedActivityAttributes"
+)
 
 // Table 是生效的规则表。只有 enabled 里的类型对实例开放。
 type Table struct {
@@ -122,6 +119,15 @@ func NewTable(extra []Rule, enabled []string, opts Options) (*Table, error) {
 	var defaults []Rule
 	if err := yaml.Unmarshal(defaultsYAML, &defaults); err != nil {
 		return nil, fmt.Errorf("内置规则表格式错误：%w", err)
+	}
+	if opts.AlertTitle == "" {
+		opts.AlertTitle = DefaultAlertTitle
+	}
+	if opts.AlertBody == "" {
+		opts.AlertBody = DefaultAlertBody
+	}
+	if opts.AttributesType == "" {
+		opts.AttributesType = DefaultAttributesType
 	}
 	t := &Table{rules: map[string]*Rule{}, opts: opts}
 	for _, r := range append(defaults, extra...) {
@@ -141,8 +147,8 @@ func NewTable(extra []Rule, enabled []string, opts Options) (*Table, error) {
 	return t, nil
 }
 
-// Lookup 返回开放的推送类型的规则；没开放或不认识的类型返回 false。
-func (t *Table) Lookup(typ string) (*Rule, bool) {
+// lookup 返回开放的推送类型的规则；没开放或不认识的类型返回 false。
+func (t *Table) lookup(typ string) (*Rule, bool) {
 	if !slices.Contains(t.enabled, typ) {
 		return nil, false
 	}
@@ -163,15 +169,15 @@ func (t *Table) Describe() map[string]any {
 	return out
 }
 
-// Input 是实例发来的一条推送里和类型规则有关的部分。
-type Input struct {
+// input 是实例发来的一条推送里和类型规则有关的部分。
+type input struct {
 	Priority int
 	APS      map[string]json.RawMessage
 	Payload  string
 }
 
-// Output 是按规则处理后要交给苹果的内容。
-type Output struct {
+// output 是按规则处理后要交给苹果的内容。
+type output struct {
 	PushType    string
 	TopicSuffix string
 	Priority    int
@@ -180,32 +186,30 @@ type Output struct {
 	Interruption string
 }
 
-// Error 是一条推送没通过规则检查。
-type Error struct {
+// ruleError 是一条推送没通过规则检查。
+type ruleError struct {
 	Result  string // invalid_aps / invalid_message / payload_too_large
 	Reason  string // 出问题的字段
 	Message string // 给人看的中文说明
 }
 
-func (e *Error) Error() string { return e.Message }
-
-// Build 按规则检查一条推送，并拼出最终发给苹果的 JSON：
+// build 按规则检查一条推送，并拼出最终发给苹果的 JSON：
 //
 //	{"aps": {实例填的控制字段 + 强制字段 + 通用文案}, "e": "<payload 密文>"}
-func (t *Table) Build(r *Rule, in Input) (*Output, *Error) {
-	out := &Output{PushType: r.Type, TopicSuffix: r.TopicSuffix, Priority: in.Priority}
+func (t *Table) build(r *Rule, in input) (*output, *ruleError) {
+	out := &output{PushType: r.Type, TopicSuffix: r.TopicSuffix, Priority: in.Priority}
 	if out.Priority == 0 {
 		out.Priority = r.Priorities[0]
 	} else if !slices.Contains(r.Priorities, out.Priority) {
-		return nil, &Error{ResultInvalidMessage, "priority",
+		return nil, &ruleError{ResultInvalidMessage, "priority",
 			fmt.Sprintf("%s 类型只允许优先级 %s", r.Type, joinInts(r.Priorities))}
 	}
 	if in.Payload != "" {
 		if r.Payload == "forbidden" {
-			return nil, &Error{ResultInvalidMessage, "payload", fmt.Sprintf("%s 类型不能带 payload", r.Type)}
+			return nil, &ruleError{ResultInvalidMessage, "payload", fmt.Sprintf("%s 类型不能带 payload", r.Type)}
 		}
 		if !opaque.MatchString(in.Payload) {
-			return nil, &Error{ResultInvalidMessage, "payload", "payload 只能是不透明的密文（base64url 字符和点）"}
+			return nil, &ruleError{ResultInvalidMessage, "payload", "payload 只能是不透明的密文（base64url 字符和点）"}
 		}
 	}
 
@@ -214,17 +218,17 @@ func (t *Table) Build(r *Rule, in Input) (*Output, *Error) {
 	for _, name := range slices.Sorted(maps.Keys(in.APS)) {
 		f, ok := r.Fields[name]
 		if !ok {
-			return nil, &Error{ResultInvalidAPS, name, fmt.Sprintf("%s 类型的 aps 里不允许出现 %s", r.Type, name)}
+			return nil, &ruleError{ResultInvalidAPS, name, fmt.Sprintf("%s 类型的 aps 里不允许出现 %s", r.Type, name)}
 		}
 		v, problem := t.check(f, in.APS[name])
 		if problem != "" {
-			return nil, &Error{ResultInvalidAPS, name, name + problem}
+			return nil, &ruleError{ResultInvalidAPS, name, name + problem}
 		}
 		aps[name] = v
 	}
 	for _, name := range slices.Sorted(maps.Keys(r.Fields)) {
 		if _, ok := in.APS[name]; r.Fields[name].Required && !ok {
-			return nil, &Error{ResultInvalidAPS, name, fmt.Sprintf("%s 类型的 aps 必须带 %s", r.Type, name)}
+			return nil, &ruleError{ResultInvalidAPS, name, fmt.Sprintf("%s 类型的 aps 必须带 %s", r.Type, name)}
 		}
 	}
 	maps.Copy(aps, r.Force)
@@ -242,10 +246,10 @@ func (t *Table) Build(r *Rule, in Input) (*Output, *Error) {
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
-		return nil, &Error{ResultInvalidAPS, "", "aps 无法序列化：" + err.Error()}
+		return nil, &ruleError{ResultInvalidAPS, "", "aps 无法序列化：" + err.Error()}
 	}
 	if len(b) > MaxPayloadBytes {
-		return nil, &Error{ResultTooLarge, "",
+		return nil, &ruleError{ResultTooLarge, "",
 			fmt.Sprintf("最终发给苹果的 JSON 有 %d 字节，超过 %d 字节上限", len(b), MaxPayloadBytes)}
 	}
 	out.Body = b

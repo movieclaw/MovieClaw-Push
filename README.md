@@ -118,10 +118,10 @@ go test ./internal/auth -run TestVectors -update       # 重新生成令牌测�
 | 目录 | 内容 |
 | --- | --- |
 | `cmd/movieclaw-push` | 程序入口和管理命令 |
-| `internal/apns` | 标准库 HTTP/2 写的 APNs 客户端 |
+| `protocol` | 协议里可以直接执行的部分：消息格式、逐条检查、推送类型规则表、aps 允许清单、结果码（公开的 Go 包） |
+| `apns` | 标准库 HTTP/2 写的 APNs 客户端（公开的 Go 包） |
 | `internal/auth` | issuer / static / none 三种鉴权 |
-| `internal/rules` | 推送类型规则表、aps 允许清单 |
 | `internal/limit` | 限额与计数（SQLite、HyperLogLog） |
-| `internal/server` | HTTP 接口 |
+| `internal/server` | HTTP 接口：鉴权 → 按协议检查 → 限额 → 发给苹果 |
 | `docs/protocol.md` | 推送中继协议 |
 | `testvectors` | 实例令牌测试向量（公开的 Go 包），签发方用它核对自己的实现 |

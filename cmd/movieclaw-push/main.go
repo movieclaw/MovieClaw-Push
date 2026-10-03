@@ -30,12 +30,12 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/movieclaw/movieclaw-push/internal/apns"
+	"github.com/movieclaw/movieclaw-push/apns"
 	"github.com/movieclaw/movieclaw-push/internal/auth"
 	"github.com/movieclaw/movieclaw-push/internal/config"
 	"github.com/movieclaw/movieclaw-push/internal/limit"
-	"github.com/movieclaw/movieclaw-push/internal/rules"
 	"github.com/movieclaw/movieclaw-push/internal/server"
+	"github.com/movieclaw/movieclaw-push/protocol"
 )
 
 // version 在构建时用 -ldflags "-X main.version=..." 注入。
@@ -109,7 +109,7 @@ func serve(configPath string) error {
 		return fmt.Errorf("创建数据目录失败：%w", err)
 	}
 
-	table, err := rules.NewTable(cfg.APNs.Rules, cfg.APNs.Types, rules.Options{
+	table, err := protocol.NewTable(cfg.APNs.Rules, cfg.APNs.Types, protocol.Options{
 		AlertTitle: cfg.APNs.AlertTitle, AlertBody: cfg.APNs.AlertBody, AttributesType: cfg.APNs.AttributesType,
 	})
 	if err != nil {
@@ -169,8 +169,7 @@ func serve(configPath string) error {
 
 	srv := server.New(server.Options{
 		Aud:      cfg.Aud,
-		Topics:   cfg.APNs.Topics,
-		Rules:    table,
+		Checker:  protocol.NewChecker(cfg.APNs.Topics, table),
 		Auth:     authn,
 		Limiter:  limiter,
 		Sender:   sender,

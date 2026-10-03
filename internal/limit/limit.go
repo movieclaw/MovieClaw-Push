@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/movieclaw/movieclaw-push/protocol"
 )
 
 // RetentionDays 是本地保留的天数（含今天）。
@@ -24,12 +26,9 @@ const RetentionDays = 7
 
 const dayLayout = "2006-01-02"
 
-// DeviceKey 是设备令牌的 SHA-256，只在内存里用来按设备计数。
-type DeviceKey [32]byte
-
 // Attempt 是一条准备发给苹果的推送。
 type Attempt struct {
-	Device       DeviceKey
+	Device       protocol.DeviceKey
 	Type         string
 	Priority     int
 	Interruption string
@@ -43,14 +42,6 @@ type Denial struct {
 	RetryAfter time.Duration
 	// Message 是给人看的中文说明，实例原样显示在设置页，新的限制类型老实例也能看懂。
 	Message string
-}
-
-// Quota 是一个限制的剩余额度，随每次推送响应返回。
-type Quota struct {
-	Limit     int64 `json:"limit"`
-	Used      int64 `json:"used"`
-	Remaining int64 `json:"remaining"`
-	ResetAt   int64 `json:"reset_at"`
 }
 
 // Stats 是一个实例一天的汇总。
@@ -114,7 +105,7 @@ type Limiter struct {
 
 	mu      sync.Mutex
 	day     string
-	devices map[DeviceKey]int64
+	devices map[protocol.DeviceKey]int64
 	stats   map[statKey]*Stats
 }
 
@@ -125,7 +116,7 @@ func New(defaults map[string]int64, store *Store, log *slog.Logger, now time.Tim
 		store:    store,
 		log:      log,
 		day:      dayOf(now),
-		devices:  map[DeviceKey]int64{},
+		devices:  map[protocol.DeviceKey]int64{},
 		stats:    map[statKey]*Stats{},
 	}
 	today, err := store.LoadDay(l.day)
@@ -176,7 +167,7 @@ func (l *Limiter) Fail(instance, reason string, now time.Time) {
 }
 
 // Quota 返回实例的剩余额度；none 模式或不限额时返回 nil。
-func (l *Limiter) Quota(instance string, lim map[string]int64, now time.Time) map[string]Quota {
+func (l *Limiter) Quota(instance string, lim map[string]int64, now time.Time) map[string]protocol.Quota {
 	limit, ok := l.limit(lim, "day")
 	if instance == "" || !ok {
 		return nil
@@ -185,7 +176,7 @@ func (l *Limiter) Quota(instance string, lim map[string]int64, now time.Time) ma
 	defer l.mu.Unlock()
 	l.rollover(now)
 	used := l.statsFor(instance).Count
-	return map[string]Quota{"day": {
+	return map[string]protocol.Quota{"day": {
 		Limit: limit, Used: used, Remaining: max(0, limit-used), ResetAt: nextDay(now).Unix(),
 	}}
 }

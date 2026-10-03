@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/movieclaw/movieclaw-push/protocol"
 )
 
 // 实例令牌的测试向量（testvectors/instance-token.json，对外以 testvectors 包发布）是中继和签发方之间的契约：
@@ -99,7 +101,7 @@ func TestVectors(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			p, err := iss.Authenticate(context.Background(), c.Token)
 			got := "ok"
-			var ae *Error
+			var ae *protocol.RequestError
 			if errors.As(err, &ae) {
 				got = ae.Code
 			} else if err != nil {

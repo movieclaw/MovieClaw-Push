@@ -204,7 +204,7 @@ Content-Type: application/json
 
 ## 6. 推送类型
 
-APNs 共有 12 种推送类型，每种的 topic 后缀、优先级规则、负载字段都不同。中继把规则写成一张表（内置于 `internal/rules/defaults.yaml`，配置里的 `apns.rules` 可以追加或整行覆盖），开放哪些类型由配置的 `apns.types` 决定。新类型加一行配置即可，不改协议。
+APNs 共有 12 种推送类型，每种的 topic 后缀、优先级规则、负载字段都不同。中继把规则写成一张表（内置于 `protocol/defaults.yaml`，配置里的 `apns.rules` 可以追加或整行覆盖），开放哪些类型由配置的 `apns.types` 决定。新类型加一行配置即可，不改协议。
 
 | 类型 | 用途 | topic 后缀 | 优先级（首个为默认） | payload | 中继的处理 |
 | --- | --- | --- | --- | --- | --- |

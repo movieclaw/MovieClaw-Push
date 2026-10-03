@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/movieclaw/movieclaw-push/protocol"
 )
 
 func TestStaticTokenLifecycle(t *testing.T) {
@@ -57,6 +59,6 @@ func TestStaticTokenLifecycle(t *testing.T) {
 }
 
 func isCode(err error, code string) bool {
-	var ae *Error
+	var ae *protocol.RequestError
 	return errors.As(err, &ae) && ae.Code == code
 }

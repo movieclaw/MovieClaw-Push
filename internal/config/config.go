@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/movieclaw/movieclaw-push/internal/rules"
+	"github.com/movieclaw/movieclaw-push/protocol"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -55,12 +55,13 @@ type APNs struct {
 	// Types 是开放的推送类型，规则见 docs/protocol.md「推送类型」。
 	Types []string `yaml:"types"`
 	// AlertTitle、AlertBody 是中继替实例填的通用文案，通知扩展解密后会替换掉。
+	// 不填时用「MovieClaw」「你有一条新通知」。
 	AlertTitle string `yaml:"alert_title"`
 	AlertBody  string `yaml:"alert_body"`
-	// AttributesType 是实时活动统一使用的、不带语义的 attributes-type。
+	// AttributesType 是实时活动统一使用的、不带语义的 attributes-type，默认 SealedActivityAttributes。
 	AttributesType string `yaml:"attributes_type"`
 	// Rules 追加或整行覆盖内置的推送类型规则。
-	Rules []rules.Rule `yaml:"rules"`
+	Rules []protocol.Rule `yaml:"rules"`
 	// DryRun 为 true 时不连接苹果，直接返回成功并记日志，只用于本地开发。
 	DryRun bool `yaml:"dry_run"`
 	// Endpoints 覆盖苹果的接口地址，只用于测试。
@@ -154,15 +155,6 @@ func (c *Config) applyDefaults(base string) {
 	resolve(&c.APNs.CAFile)
 	if len(c.APNs.Types) == 0 {
 		c.APNs.Types = []string{"alert"}
-	}
-	if c.APNs.AlertTitle == "" {
-		c.APNs.AlertTitle = "MovieClaw"
-	}
-	if c.APNs.AlertBody == "" {
-		c.APNs.AlertBody = "你有一条新通知"
-	}
-	if c.APNs.AttributesType == "" {
-		c.APNs.AttributesType = "SealedActivityAttributes"
 	}
 	if c.Auth.CacheDir == "" {
 		c.Auth.CacheDir = filepath.Join(c.DataDir, "auth-cache")

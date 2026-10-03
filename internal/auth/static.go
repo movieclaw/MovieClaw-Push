@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/movieclaw/movieclaw-push/protocol"
 )
 
 // StaticPrefix 是静态令牌的前缀，方便在日志、代码仓库里识别出泄露的令牌。
@@ -65,7 +67,7 @@ func (s *Static) Authenticate(_ context.Context, bearer string) (*Principal, err
 	}
 	tokens, err := s.load()
 	if err != nil {
-		return nil, &Error{Status: http.StatusInternalServerError, Code: "internal", Message: "读取令牌文件失败：" + err.Error()}
+		return nil, &protocol.RequestError{Status: http.StatusInternalServerError, Code: protocol.ErrInternal, Message: "读取令牌文件失败：" + err.Error()}
 	}
 	t, ok := tokens[id]
 	sum := sha256.Sum256([]byte(bearer))

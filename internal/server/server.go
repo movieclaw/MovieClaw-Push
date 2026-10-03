@@ -12,24 +12,15 @@ package server
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"log/slog"
 	"net/http"
-	"slices"
-	"strings"
 	"time"
 
-	"github.com/movieclaw/movieclaw-push/internal/apns"
+	"github.com/movieclaw/movieclaw-push/apns"
 	"github.com/movieclaw/movieclaw-push/internal/auth"
 	"github.com/movieclaw/movieclaw-push/internal/limit"
-	"github.com/movieclaw/movieclaw-push/internal/rules"
+	"github.com/movieclaw/movieclaw-push/protocol"
 )
-
-// ProtocolVersion 是推送中继协议的版本。只有破坏兼容时才升；加类型、加字段、加限额都不算。
-const ProtocolVersion = 1
-
-// MaxBatch 是一次请求最多带的推送条数。
-const MaxBatch = 100
 
 // Sender 把推送交给苹果，由 apns.Client 实现，测试里可以替换。
 type Sender interface {
@@ -39,8 +30,7 @@ type Sender interface {
 // Options 是组装中继需要的全部部件。
 type Options struct {
 	Aud      string
-	Topics   []string
-	Rules    *rules.Table
+	Checker  *protocol.Checker
 	Auth     auth.Authenticator
 	Limiter  *limit.Limiter
 	Sender   Sender
@@ -73,29 +63,18 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"protocol":          ProtocolVersion,
-		"software":          "movieclaw-push/" + s.opts.Version,
-		"aud":               s.opts.Aud,
-		"platforms":         []string{"apns"},
-		"environments":      []string{"production", "development"},
-		"topics":            s.opts.Topics,
-		"types":             s.opts.Rules.Describe(),
-		"auth":              s.opts.Auth.Info(),
-		"limits":            s.opts.Defaults,
-		"max_batch":         MaxBatch,
-		"max_payload_bytes": rules.MaxPayloadBytes,
-	})
+	protocol.WriteJSON(w, http.StatusOK,
+		s.opts.Checker.Info("movieclaw-push/"+s.opts.Version, s.opts.Aud, s.opts.Auth.Info(), s.opts.Defaults))
 }
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	if !s.opts.Auth.Ready() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		protocol.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "degraded", "message": "还没有拿到签发方的公钥，暂时无法验证实例凭证",
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	protocol.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // usage 给 api 每小时拉取按天汇总的计数。since 是起始日期（UTC，含），默认最近 7 天。
@@ -104,7 +83,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "管理接口没有开启（配置 admin.key_file 后开启）")
 		return
 	}
-	got := bearer(r)
+	got := protocol.Bearer(r)
 	if subtle.ConstantTimeCompare([]byte(got), []byte(s.opts.AdminKey)) != 1 {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "管理密钥不对")
 		return
@@ -122,7 +101,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "读取推送计数失败")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"days": days})
+	protocol.WriteJSON(w, http.StatusOK, map[string]any{"days": days})
 }
 
 // accessLog 记录每个请求，健康检查除外（监控每分钟都在调）。
@@ -149,27 +128,7 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-func bearer(r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	if len(h) > 7 && strings.EqualFold(h[:7], "bearer ") {
-		return strings.TrimSpace(h[7:])
-	}
-	return ""
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// writeError 写整个请求级别的错误：{"error": "<错误码>", "message": "<中文说明>"}。
+// writeError 写管理接口的错误，格式和协议里整个请求的错误一致。
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"error": code, "message": message})
-}
-
-// topicAllowed 检查基础 Bundle ID 是否在白名单里。
-func (s *Server) topicAllowed(topic string) bool {
-	return slices.Contains(s.opts.Topics, topic)
+	protocol.WriteError(w, &protocol.RequestError{Status: status, Code: code, Message: message})
 }

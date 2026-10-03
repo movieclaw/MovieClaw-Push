@@ -1,4 +1,4 @@
-package rules
+package protocol
 
 import (
 	"encoding/json"
@@ -24,18 +24,18 @@ func aps(t *testing.T, s string) map[string]json.RawMessage {
 	return m
 }
 
-func build(t *testing.T, tbl *Table, typ string, in Input) (*Output, *Error) {
+func build(t *testing.T, tbl *Table, typ string, in input) (*output, *ruleError) {
 	t.Helper()
-	r, ok := tbl.Lookup(typ)
+	r, ok := tbl.lookup(typ)
 	if !ok {
 		t.Fatalf("类型 %s 没开放", typ)
 	}
-	return tbl.Build(r, in)
+	return tbl.build(r, in)
 }
 
 func TestAlertWithPayloadGetsGenericCopy(t *testing.T) {
 	tbl := newTable(t, "alert")
-	out, err := build(t, tbl, "alert", Input{
+	out, err := build(t, tbl, "alert", input{
 		APS:     aps(t, `{"interruption-level": "time-sensitive", "badge": 3}`),
 		Payload: "v1.k7Qm2xP9.bm9uY2U.Y2lwaGVydGV4dA",
 	})
@@ -53,7 +53,7 @@ func TestAlertWithPayloadGetsGenericCopy(t *testing.T) {
 
 func TestAlertWithoutPayloadOnlyForwardsControlFields(t *testing.T) {
 	tbl := newTable(t, "alert")
-	out, err := build(t, tbl, "alert", Input{APS: aps(t, `{"badge": 0}`)})
+	out, err := build(t, tbl, "alert", input{APS: aps(t, `{"badge": 0}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestSemanticPlaintextIsRejected(t *testing.T) {
 		{"liveactivity", `{"event": "update"}`, "timestamp"},
 	}
 	for _, c := range cases {
-		_, err := build(t, tbl, c.typ, Input{APS: aps(t, c.aps)})
+		_, err := build(t, tbl, c.typ, input{APS: aps(t, c.aps)})
 		if err == nil || err.Result != ResultInvalidAPS || err.Reason != c.reason {
 			t.Errorf("%s %s：期望 invalid_aps/%s，实际 %+v", c.typ, c.aps, c.reason, err)
 		}
@@ -93,34 +93,34 @@ func TestSemanticPlaintextIsRejected(t *testing.T) {
 
 func TestPayloadMustBeOpaque(t *testing.T) {
 	tbl := newTable(t, "alert", "widgets")
-	if _, err := build(t, tbl, "alert", Input{Payload: `{"title":"片名"}`}); err == nil || err.Reason != "payload" {
+	if _, err := build(t, tbl, "alert", input{Payload: `{"title":"片名"}`}); err == nil || err.Reason != "payload" {
 		t.Fatalf("明文 payload 应被拒绝：%+v", err)
 	}
-	if _, err := build(t, tbl, "widgets", Input{Payload: "v1.a.b.c"}); err == nil || err.Result != ResultInvalidMessage {
+	if _, err := build(t, tbl, "widgets", input{Payload: "v1.a.b.c"}); err == nil || err.Result != ResultInvalidMessage {
 		t.Fatalf("widgets 不能带 payload：%+v", err)
 	}
 }
 
 func TestBackgroundForcesFields(t *testing.T) {
 	tbl := newTable(t, "background")
-	out, err := build(t, tbl, "background", Input{Payload: "v1.a.b.c"})
+	out, err := build(t, tbl, "background", input{Payload: "v1.a.b.c"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(out.Body) != `{"aps":{"content-available":1},"e":"v1.a.b.c"}` || out.Priority != 5 {
 		t.Fatalf("background 输出不对：%s %d", out.Body, out.Priority)
 	}
-	if _, err := build(t, tbl, "background", Input{Priority: 10}); err == nil || err.Reason != "priority" {
+	if _, err := build(t, tbl, "background", input{Priority: 10}); err == nil || err.Reason != "priority" {
 		t.Fatalf("background 不能用优先级 10：%+v", err)
 	}
-	if _, err := build(t, tbl, "background", Input{APS: aps(t, `{"badge": 1}`)}); err == nil || err.Reason != "badge" {
+	if _, err := build(t, tbl, "background", input{APS: aps(t, `{"badge": 1}`)}); err == nil || err.Reason != "badge" {
 		t.Fatalf("background 不能带 badge：%+v", err)
 	}
 }
 
 func TestLiveActivity(t *testing.T) {
 	tbl := newTable(t, "liveactivity")
-	out, err := build(t, tbl, "liveactivity", Input{APS: aps(t, `{
+	out, err := build(t, tbl, "liveactivity", input{APS: aps(t, `{
 		"timestamp": 1767225600, "event": "start", "content-state": {"e": "v1.k.n.c"},
 		"attributes-type": "SealedActivityAttributes", "attributes": {"e": "v1.k.n.d"}, "alert": true}`)})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestLiveActivity(t *testing.T) {
 
 func TestWidgets(t *testing.T) {
 	tbl := newTable(t, "widgets")
-	out, err := build(t, tbl, "widgets", Input{})
+	out, err := build(t, tbl, "widgets", input{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestWidgets(t *testing.T) {
 
 func TestPayloadTooLarge(t *testing.T) {
 	tbl := newTable(t, "alert")
-	_, err := build(t, tbl, "alert", Input{Payload: "v1." + strings.Repeat("A", MaxPayloadBytes)})
+	_, err := build(t, tbl, "alert", input{Payload: "v1." + strings.Repeat("A", MaxPayloadBytes)})
 	if err == nil || err.Result != ResultTooLarge {
 		t.Fatalf("超过 4KB 应返回 payload_too_large：%+v", err)
 	}
@@ -162,10 +162,10 @@ func TestPayloadTooLarge(t *testing.T) {
 
 func TestOnlyEnabledTypesAreOpen(t *testing.T) {
 	tbl := newTable(t, "alert")
-	if _, ok := tbl.Lookup("background"); ok {
+	if _, ok := tbl.lookup("background"); ok {
 		t.Fatal("没开放的类型不应能用")
 	}
-	if _, ok := tbl.Lookup("voip"); ok {
+	if _, ok := tbl.lookup("voip"); ok {
 		t.Fatal("不认识的类型不应能用")
 	}
 	if _, err := NewTable(nil, []string{"voip"}, Options{}); err == nil {
@@ -179,7 +179,7 @@ func TestConfigCanAddRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, rerr := build(t, tbl, "location", Input{})
+	out, rerr := build(t, tbl, "location", input{})
 	if rerr != nil || out.TopicSuffix != ".location-query" {
 		t.Fatalf("配置追加的类型不生效：%+v %+v", out, rerr)
 	}

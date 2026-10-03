@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/movieclaw/movieclaw-push/internal/apns"
+	"github.com/movieclaw/movieclaw-push/apns"
 	"github.com/movieclaw/movieclaw-push/internal/auth"
 	"github.com/movieclaw/movieclaw-push/internal/limit"
-	"github.com/movieclaw/movieclaw-push/internal/rules"
+	"github.com/movieclaw/movieclaw-push/protocol"
 )
 
 type fakeAuth struct{}
@@ -33,9 +33,9 @@ func (fakeAuth) Authenticate(_ context.Context, b string) (*auth.Principal, erro
 	case "small": // 令牌里的 lim 覆盖默认值
 		return &auth.Principal{Instance: "ins-2", Limits: map[string]int64{"day": 4}}, nil
 	case "no-scope":
-		return nil, &auth.Error{Status: http.StatusForbidden, Code: "forbidden", Message: "实例凭证没有 push 权限"}
+		return nil, &protocol.RequestError{Status: http.StatusForbidden, Code: "forbidden", Message: "实例凭证没有 push 权限"}
 	}
-	return nil, &auth.Error{Status: http.StatusUnauthorized, Code: "unauthorized", Message: "实例凭证无效或已过期"}
+	return nil, &protocol.RequestError{Status: http.StatusUnauthorized, Code: "unauthorized", Message: "实例凭证无效或已过期"}
 }
 
 // fakeSender 按设备令牌决定苹果怎么回应。
@@ -70,7 +70,7 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	table, err := rules.NewTable(nil, []string{"alert", "background"}, rules.Options{AlertTitle: "MovieClaw", AlertBody: "你有一条新通知"})
+	table, err := protocol.NewTable(nil, []string{"alert", "background"}, protocol.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	sender := &fakeSender{}
 	s := New(Options{
-		Aud: "https://push.example.com", Topics: []string{"io.movieclaw.app"}, Rules: table, Auth: fakeAuth{},
+		Aud: "https://push.example.com", Checker: protocol.NewChecker([]string{"io.movieclaw.app"}, table), Auth: fakeAuth{},
 		Limiter: limiter, Sender: sender, Defaults: defaults, AdminKey: "admin-secret", Version: "test", Log: log,
 	})
 	return &harness{srv: s, h: s.Handler(), sender: sender, logs: logs}
@@ -259,7 +259,7 @@ func TestRateLimit(t *testing.T) {
 func TestBatchSize(t *testing.T) {
 	h := newHarness(t)
 	var messages []string
-	for i := range MaxBatch + 1 {
+	for i := range protocol.MaxBatch + 1 {
 		messages = append(messages, msg(uuid(i), token, ""))
 	}
 	if code, out := h.do(t, "POST", "/v1/push", "good", `{"messages":[`+strings.Join(messages, ",")+`]}`); code != 400 || out["error"] != "too_many_messages" {

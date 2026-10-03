@@ -12,6 +12,8 @@ package auth
 import (
 	"context"
 	"net/http"
+
+	"github.com/movieclaw/movieclaw-push/protocol"
 )
 
 // Principal 是通过鉴权的调用方。
@@ -29,7 +31,8 @@ type Principal struct {
 type Authenticator interface {
 	// Mode 返回 issuer、static 或 none，写进 /v1/info。
 	Mode() string
-	// Authenticate 校验 Authorization: Bearer 后面的凭证。失败时返回 *Error。
+	// Authenticate 校验 Authorization: Bearer 后面的凭证。失败时返回 *protocol.RequestError：
+	// 401 凭证无效或已吊销，403 缺少权限。
 	Authenticate(ctx context.Context, bearer string) (*Principal, error)
 	// Info 是写进 /v1/info 的鉴权信息。
 	Info() map[string]any
@@ -37,21 +40,12 @@ type Authenticator interface {
 	Ready() bool
 }
 
-// Error 是鉴权失败。Status 是整个请求的 HTTP 状态码：401 凭证无效或已吊销，403 缺少权限。
-type Error struct {
-	Status  int
-	Code    string
-	Message string
+func unauthorized(msg string) *protocol.RequestError {
+	return &protocol.RequestError{Status: http.StatusUnauthorized, Code: protocol.ErrUnauthorized, Message: msg}
 }
 
-func (e *Error) Error() string { return e.Message }
-
-func unauthorized(msg string) *Error {
-	return &Error{Status: http.StatusUnauthorized, Code: "unauthorized", Message: msg}
-}
-
-func forbidden(msg string) *Error {
-	return &Error{Status: http.StatusForbidden, Code: "forbidden", Message: msg}
+func forbidden(msg string) *protocol.RequestError {
+	return &protocol.RequestError{Status: http.StatusForbidden, Code: protocol.ErrForbidden, Message: msg}
 }
 
 // None 不鉴权：任何人都能调用，只靠按设备的每日上限防刷。

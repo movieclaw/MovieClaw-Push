@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/movieclaw/movieclaw-push/protocol"
 )
 
 func newLimiter(t *testing.T, path string, now time.Time) (*Limiter, *Store) {
@@ -24,7 +26,7 @@ func newLimiter(t *testing.T, path string, now time.Time) (*Limiter, *Store) {
 	return l, store
 }
 
-func device(s string) DeviceKey { return sha256.Sum256([]byte(s)) }
+func device(s string) protocol.DeviceKey { return sha256.Sum256([]byte(s)) }
 
 func TestDayAndDeviceLimits(t *testing.T) {
 	now := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
