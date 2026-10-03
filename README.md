@@ -119,6 +119,7 @@ go test ./internal/auth -run TestVectors -update       # 重新生成令牌测�
 | --- | --- |
 | `cmd/movieclaw-push` | 程序入口和管理命令 |
 | `protocol` | 协议里可以直接执行的部分：消息格式、逐条检查、推送类型规则表、aps 允许清单、结果码（公开的 Go 包） |
+| `protocol/protocoltest` | 协议一致性测试和假 APNs：任何中继实现都应该跑通（`cmd/movieclaw-push` 的测试对编译出来的程序跑它） |
 | `apns` | 标准库 HTTP/2 写的 APNs 客户端（公开的 Go 包） |
 | `internal/auth` | issuer / static / none 三种鉴权 |
 | `internal/limit` | 限额与计数（SQLite、HyperLogLog） |
