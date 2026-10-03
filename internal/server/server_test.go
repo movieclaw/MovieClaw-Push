@@ -25,13 +25,10 @@ type fakeAuth struct{}
 
 func (fakeAuth) Mode() string         { return "static" }
 func (fakeAuth) Info() map[string]any { return map[string]any{"mode": "static"} }
-func (fakeAuth) Ready() bool          { return true }
 func (fakeAuth) Authenticate(_ context.Context, b string) (*auth.Principal, error) {
 	switch b {
-	case "good": // 用配置的默认限额
+	case "good":
 		return &auth.Principal{Instance: "ins-1"}, nil
-	case "small": // 令牌里的 lim 覆盖默认值
-		return &auth.Principal{Instance: "ins-2", Limits: map[string]int64{"day": 4}}, nil
 	case "no-scope":
 		return nil, &protocol.RequestError{Status: http.StatusForbidden, Code: "forbidden", Message: "实例凭证没有 push 权限"}
 	}
@@ -70,6 +67,11 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessWithLimits(t, map[string]int64{"day": 5000, "device_day": 500})
+}
+
+func newHarnessWithLimits(t *testing.T, defaults map[string]int64) *harness {
+	t.Helper()
 	table, err := protocol.NewTable(nil, []string{"alert", "background"}, protocol.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +83,6 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { store.Close() })
 	logs := &bytes.Buffer{}
 	log := slog.New(slog.NewJSONHandler(&lockedWriter{w: logs}, nil))
-	defaults := map[string]int64{"day": 5000, "device_day": 500}
 	limiter, err := limit.New(defaults, store, log, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +90,7 @@ func newHarness(t *testing.T) *harness {
 	sender := &fakeSender{}
 	s := New(Options{
 		Aud: "https://push.example.com", Checker: protocol.NewChecker([]string{"io.movieclaw.app"}, table), Auth: fakeAuth{},
-		Limiter: limiter, Sender: sender, Defaults: defaults, AdminKey: "admin-secret", Version: "test", Log: log,
+		Limiter: limiter, Sender: sender, Defaults: defaults, Version: "test", Log: log,
 	})
 	return &harness{srv: s, h: s.Handler(), sender: sender, logs: logs}
 }
@@ -230,12 +231,12 @@ func TestBatchResults(t *testing.T) {
 }
 
 func TestRateLimit(t *testing.T) {
-	h := newHarness(t)
+	h := newHarnessWithLimits(t, map[string]int64{"day": 4, "device_day": 500})
 	var messages []string
 	for i := range 6 {
 		messages = append(messages, msg(uuid(i), token, ""))
 	}
-	_, out := h.do(t, "POST", "/v1/push", "small", `{"messages":[`+strings.Join(messages, ",")+`]}`)
+	_, out := h.do(t, "POST", "/v1/push", "good", `{"messages":[`+strings.Join(messages, ",")+`]}`)
 	results := out["results"].([]any)
 	limited := 0
 	for _, r := range results {
@@ -248,7 +249,7 @@ func TestRateLimit(t *testing.T) {
 		}
 	}
 	if limited != 2 {
-		t.Fatalf("lim.day=4，6 条里应有 2 条被限：%d", limited)
+		t.Fatalf("limits.day=4，6 条里应有 2 条被限：%d", limited)
 	}
 	q := out["quota"].(map[string]any)["day"].(map[string]any)
 	if q["limit"].(float64) != 4 || q["remaining"].(float64) != 0 {
@@ -267,28 +268,5 @@ func TestBatchSize(t *testing.T) {
 	}
 	if code, _ := h.do(t, "POST", "/v1/push", "good", `not json`); code != 400 {
 		t.Fatalf("坏 JSON 应返回 400：%d", code)
-	}
-}
-
-func TestAdminUsage(t *testing.T) {
-	h := newHarness(t)
-	h.do(t, "POST", "/v1/push", "good", `{"messages":[`+msg(uuid(1), token, "")+`,`+msg(uuid(2), "410"+token[3:], "")+`]}`)
-	if code, _ := h.do(t, "GET", "/admin/v1/usage", "wrong", ""); code != 401 {
-		t.Fatalf("管理密钥不对应返回 401：%d", code)
-	}
-	if code, _ := h.do(t, "GET", "/admin/v1/usage?since=yesterday", "admin-secret", ""); code != 400 {
-		t.Fatalf("since 格式不对应返回 400：%d", code)
-	}
-	code, out := h.do(t, "GET", "/admin/v1/usage", "admin-secret", "")
-	if code != 200 {
-		t.Fatalf("%d %v", code, out)
-	}
-	days := out["days"].([]any)
-	if len(days) != 1 {
-		t.Fatalf("应有一行：%v", days)
-	}
-	d := days[0].(map[string]any)
-	if d["instance"] != "ins-1" || d["count"].(float64) != 2 || d["failures"].(map[string]any)["unregistered"].(float64) != 1 {
-		t.Fatalf("汇总不对：%v", d)
 	}
 }

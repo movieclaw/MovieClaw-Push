@@ -58,8 +58,6 @@ func (s *Static) Mode() string { return "static" }
 
 func (s *Static) Info() map[string]any { return map[string]any{"mode": "static"} }
 
-func (s *Static) Ready() bool { return true }
-
 func (s *Static) Authenticate(_ context.Context, bearer string) (*Principal, error) {
 	id, ok := parseStaticToken(bearer)
 	if !ok {
@@ -185,4 +183,25 @@ func writeStaticTokens(path string, list []StaticToken) error {
 		return err
 	}
 	return writeFileAtomic(path, b)
+}
+
+// writeFileAtomic 先写临时文件再改名，中途断电也不会留下半个文件。
+func writeFileAtomic(path string, b []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }

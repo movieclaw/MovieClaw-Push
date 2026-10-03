@@ -1,8 +1,8 @@
 # MovieClaw 推送中继协议 v1
 
-本文是 `movieclaw-push`（推送中继）与调用方（MovieClaw 实例）、令牌签发方（官方为 MovieClaw 的 api）之间的协议。实例、签发方、中继三方都照它实现。
+本文是推送中继和调用方（MovieClaw 实例）之间的协议。本仓库的 `movieclaw-push` 是给自建用户的一份实现，MovieClaw 官方中继是另一份；两份都调用本仓库的 `protocol` 包执行协议，并跑通 `protocol/protocoltest` 一致性测试（第 12 节），实例连哪个中继都一样工作。
 
-协议里没有「账号」的概念：中继只认实例令牌里的几个声明，不调用签发方的任何业务接口。
+鉴权、限额怎么定、计数存在哪，是各个中继自己的事；协议只规定实例看得到的行为。
 
 ## 1. 中继做什么、不做什么
 
@@ -11,7 +11,7 @@
 - **看不到内容**：推送内容由实例端到端加密，中继只转发密文。中继能看到的字段只有控制类的数值或不透明值（优先级、角标、过期时间……），任何能看出语义的文字（事件类型、片名、通知分组名……）都不允许出现在明文里。
 - **不知道手机属于谁**：设备令牌只在请求里出现，中继不保存；日志只记令牌哈希的前缀。
 - **不认设备类型**：中继只认推送类型（alert、background……），iPhone、Apple TV 的差异由 App 和实例处理。
-- **只在本地记数字**：按「实例 × 天」汇总的计数写进本地 SQLite，用来执行限额，签发方每小时来拉。
+- **只记数字**：按「实例 × 天」汇总推送条数，用来执行限额；不记设备令牌，也不记内容。
 - **不相信调用方声称的任何东西**：只检查自己能验证的（令牌签名、白名单、类型规则、限额），内容是否属实交给手机验证（带认证的加密）。
 
 ## 2. 接口一览
@@ -20,7 +20,6 @@
 | --- | --- | --- |
 | `GET /v1/info` | 无 | 协议版本、`aud`、能推送的 Bundle ID、开放的推送类型及规则、鉴权方式、默认限额 |
 | `POST /v1/push` | `Authorization: Bearer <实例凭证>` | 批量推送，一次最多 100 条，每条单独返回结果 |
-| `GET /admin/v1/usage` | `Authorization: Bearer <管理密钥>` | 按「实例 × 天」汇总的计数 |
 | `GET /healthz` | 无 | 健康检查 |
 
 所有请求和响应都是 JSON（UTF-8）。整个请求的错误用 HTTP 状态码表示，响应体是：
@@ -36,21 +35,22 @@
 | 401 | `unauthorized` | 缺少凭证、凭证无效、过期或已吊销 |
 | 403 | `forbidden` | 凭证有效但没有 `push` 权限 |
 | 503 | `unavailable` | 中继暂时没法核实凭证（比如它依赖的服务连不上），稍后重试 |
-| 503 | — | 只用于 `/healthz`：issuer 模式下还没拿到签发方的公钥 |
 
 单条推送的问题（格式、类型、限额、苹果的拒绝……）不影响同批的其他推送，放在 200 响应的单条结果里。
 
 ## 3. 鉴权
 
-中继的鉴权方式由配置决定，同一份代码。实例先查 `/v1/info` 的 `auth.mode` 决定怎么带凭证。
+凭证放在 `Authorization: Bearer <凭证>`，格式由中继决定，实例当作不透明的字符串原样带上。`/v1/info` 的 `auth.mode` 说明中继用哪种方式，实例用它决定带不带凭证、在设置页显示什么：
 
 | `auth.mode` | 凭证 | 用在哪 |
 | --- | --- | --- |
-| `issuer` | 签发方签发的实例令牌（Ed25519 JWT），见第 11 节 | 官方中继，签发方是 MovieClaw 的 api |
-| `static` | 中继自己发的令牌 `mcpush_<ID>_<密钥>`（`movieclaw-push token create --name 名称`） | 自签 App 用户自建的中继 |
-| `none` | 不带 `Authorization` | 只作运营方停运时的退路：任何人都能调用，只按设备限流 |
+| `static` | 中继自己发的令牌 `mcpush_<ID>_<密钥>`（`movieclaw-push token create --name 名称`） | 自签 App 用户自建的中继（本实现） |
+| `none` | 不带 `Authorization` | 只在内网，或运营方停运时的退路：任何人都能调用，只按设备限流（本实现） |
+| `issuer` | 实例从 MovieClaw 云端拿到的 `access_token` | MovieClaw 官方中继 |
 
-**实例必须支持 `none`**：`/v1/info` 声明 `auth.mode: none` 时不带凭证直接推送。否则运营方停运、把官方中继切到 `none` 时，老版本实例都切不过去。
+以后有别的值也只是名字不同：实例遇到不认识的 `auth.mode` 照样带上配置的凭证。
+
+**实例必须支持 `none`**：`/v1/info` 声明 `auth.mode: none` 时不带凭证直接推送。否则运营方停运、把中继切到 `none` 时，老版本实例都切不过去。
 
 ## 4. `GET /v1/info`
 
@@ -74,7 +74,7 @@
       }
     }
   },
-  "auth": {"mode": "issuer", "issuers": ["https://api.example.com"]},
+  "auth": {"mode": "static"},
   "limits": {"day": 5000, "device_day": 500},
   "max_batch": 100,
   "max_payload_bytes": 4096
@@ -84,12 +84,12 @@
 | 字段 | 说明 |
 | --- | --- |
 | `protocol` | 协议主版本。只有破坏兼容时才升 |
-| `aud` | 中继的固定标识，实例令牌的 `aud` 必须等于它 |
+| `aud` | 中继的固定标识，不随实例实际访问的地址变化（主备地址共用一个值） |
 | `platforms` | v1 只有 `apns`；以后加安卓只多一个 `fcm` |
 | `topics` | 能推送的基础 Bundle ID。实例按设备上报的 Bundle ID 匹配能推送它的中继 |
 | `types` | **开放的**推送类型及各自的规则（第 6 节）。没列出的类型会被拒绝 |
-| `auth` | 鉴权方式（第 3 节）；`issuer` 时列出受信任的签发方 |
-| `limits` | 默认限额（令牌里没有 `lim` 时使用）；负数表示不限 |
+| `auth` | 鉴权方式（第 3 节） |
+| `limits` | 默认限额，键和第 9 节的限制名一致；负数表示不限。只用于展示，实际额度以每次推送响应里的 `quota` 为准 |
 | `max_batch` / `max_payload_bytes` | 一次最多几条 / 最终发给苹果的 JSON 上限 |
 
 实例用新的推送类型前，先查 `types` 里有没有。
@@ -277,146 +277,32 @@ authorization: bearer <provider 令牌>
 
 ## 9. 限额与计数
 
-- **每个实例每天**：取令牌里的 `lim.day`，没有就用中继配置的默认值（官方 5000）。`none` 模式不检查。
-- **每台设备每天**：取令牌里的 `lim.device_day`，没有就用默认值（官方 500）。按设备令牌的哈希计数，覆盖所有实例。只放内存，中继重启清零。
-- 负数表示不限；`0` 表示一条都不能发。
+限额多少、按什么维度由中继决定，实例只需要处理 `rate_limited`、显示 `message`、参考 `quota`。共同的规则：
+
 - 日界按 UTC 划分，限额在 UTC 零点（北京时间 8:00）重置。
 - 通过限额检查、准备发给苹果的推送计入当天条数（苹果后来拒绝的也算）。
-- 以后加新的限制（按推送类型、按优先级、按账号汇总……）只是在 `lim` 里加一个键、在中继里实现，实例不用升级——实例只需要处理 `rate_limited` 和显示 `message`。
+- 负数表示不限；`0` 表示一条都不能发。
+- 中继以后加新的限制（按推送类型、按优先级……）只是多一个限制名，实例不用升级。
 
-## 10. `GET /admin/v1/usage`
+本实现的两个限制，都在配置的 `limits` 里：
 
-```http
-GET /admin/v1/usage?since=2026-09-25
-Authorization: Bearer <管理密钥>
-```
+- `day`：每个令牌每天（默认 5000）。`none` 模式不检查。
+- `device_day`：每台设备每天（默认 500），按设备令牌的哈希计数、覆盖所有令牌，只放内存，中继重启清零。
 
-`since` 是起始日期（UTC，含），默认最近 7 天。配置了 `admin.key_file` 才开启，否则返回 404。
+按「实例 × 天」的汇总（条数、各类型和优先级的条数、近似的不同设备数、每小时条数、失败原因）写进 `data_dir` 下的 SQLite，每 10 秒写一次，保留 7 天，用 `movieclaw-push usage` 查看。不同设备数用 HyperLogLog 近似计数（误差约 3%），不保存设备令牌或令牌哈希。
 
-```json
-{
-  "days": [
-    {
-      "instance": "0b7c6f8e-3d2a-4e5f-9a1b-2c3d4e5f6a7b",
-      "day": "2026-10-01",
-      "count": 120,
-      "type": {"alert": 118, "background": 2},
-      "priority": {"10": 110, "5": 10},
-      "interruption": {"time-sensitive": 3},
-      "devices": 3,
-      "failures": {"unregistered": 1, "rate_limited": 4},
-      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 20, 0, 0, 0, 0, 0, 0, 40, 30, 0, 0],
-      "peak_hour": 40
-    }
-  ]
-}
-```
-
-| 字段 | 说明 |
-| --- | --- |
-| `instance` | issuer 模式为令牌的 `sub`；static 模式为令牌 ID；none 模式为空串 |
-| `count` | 通过限额、发给苹果的条数 |
-| `type` / `priority` / `interruption` | 按推送类型、优先级、`interruption-level` 的条数 |
-| `devices` | 不同设备数，HyperLogLog 近似计数（误差约 3%，个位数时可能差 1）；不保存令牌或令牌哈希 |
-| `failures` | 各结果码（`ok` 以外）的次数，包括中继自己拦下的 |
-| `hours` / `peak_hour` | 24 个小时（UTC）各自的条数、其中的最大值 |
-
-计数每 10 秒写一次盘（本接口读取前会先写盘），本地保留 7 天。自建时可以用 `movieclaw-push usage` 在命令行查看。
-
-## 11. 实例令牌（issuer 模式）
-
-Ed25519 签名的 JWT（RFC 8037，`alg: EdDSA`）。
-
-```json
-// 头
-{"alg": "EdDSA", "typ": "JWT", "kid": "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"}
-// 声明
-{
-  "iss": "https://api.example.com",
-  "sub": "0b7c6f8e-3d2a-4e5f-9a1b-2c3d4e5f6a7b",
-  "aud": "https://push.example.com",
-  "iat": 1767225540,
-  "exp": 1767311940,
-  "scope": "push",
-  "acct": "6a0f4c1e-8b2d-4f3a-9e5c-7d1b2a3c4e5f",
-  "lim": {"day": 5000, "device_day": 500}
-}
-```
-
-| 声明 | 内容 |
-| --- | --- |
-| `iss` | 签发方地址，必须是中继配置的受信任签发方之一 |
-| `sub` | 实例 ID，中继用它计数、记日志、查吊销名单 |
-| `aud` | 中继在配置里声明的固定标识（字符串；数组形式也接受），不随实例实际访问的地址变化，主备中继用同一个令牌 |
-| `exp` | 过期时间，必填。官方签发的令牌有效期 24 小时 |
-| `iat` | 签发时间 |
-| `scope` | 空格分隔的权限，推送需要包含 `push` |
-| `acct` | 账号的不透明 ID（不是邮箱），以后按账号汇总限额用；吊销名单也可以按它整体吊销 |
-| `lim` | 限额表，按名字索引，可扩展；没有的键用中继的默认值 |
-
-中继的验证规则：
-
-1. `alg` 必须是 `EdDSA`（`none`、`HS256` 等一律拒绝）；
-2. 按 `iss` 找到受信任的签发方，按 `kid` 找公钥；`kid` 不认识时立刻刷新一次该签发方的公钥（30 秒内最多一次），仍不认识则拒绝；
-3. 签名有效、`aud` 等于本中继的 `aud`、`exp` 未过、`nbf`（如有）已到，允许 30 秒时钟误差；
-4. `sub` 非空，且 `sub`、`acct` 都不在吊销名单里；
-5. `scope` 包含 `push`，否则 403。
-
-其他失败都是 401。
-
-## 12. 对签发方的要求
-
-签发方提供两个地址（写在中继配置里）：
-
-**公钥（JWKS）**，公开：
-
-```json
-{"keys": [{"kty": "OKP", "crv": "Ed25519", "x": "<base64url 公钥>", "kid": "<RFC 7638 指纹>", "alg": "EdDSA", "use": "sig"}]}
-```
-
-`kid` 用 RFC 7638 JWK 指纹：对 `{"crv":"Ed25519","kty":"OKP","x":"<x>"}`（成员按字典序、无空白）做 SHA-256，再 base64url。中继忽略其他类型的键。
-
-**吊销名单**，用中继专用密钥（`Authorization: Bearer <密钥>`）调用：
-
-```json
-{
-  "iss": "https://api.example.com",
-  "generated_at": 1767225600,
-  "entries": [
-    {"sub": "9f1e2d3c-…", "revoked_at": 1767225300},
-    {"acct": "1d2c3b4a-…", "revoked_at": 1767225300}
-  ]
-}
-```
-
-- `sub` 条目吊销一个实例，`acct` 条目吊销一个账号下的全部实例。
-- 名单只需要覆盖令牌还可能有效的时间：令牌最长 24 小时，官方签发方列出 48 小时内吊销的实例。
-- `iss` 不为空时必须和配置一致，否则中继拒绝使用这份名单。
-
-**中继这边**：启动时先读磁盘缓存，之后每 `refresh_interval`（默认 5 分钟）拉一次，成功后写到磁盘（`auth.cache_dir`）。拉取失败时继续用已有的。所以：
-
-- 签发方宕机期间，即使中继重启，推送也照常——实例令牌 24 小时有效，签发方宕机一天以内不受影响；
-- 解绑在一个拉取周期（5 分钟）内生效。
-
-**签名密钥轮换**：先在 JWKS 里发布新公钥，再切换签发，旧公钥保留 24 小时（令牌有效期）后删除。中继遇到新 `kid` 会立即刷新，不用等周期。
-
-## 13. 向前兼容
+## 10. 向前兼容
 
 - 中继忽略消息里不认识的字段；不支持的类型在单条结果里报错，不影响同批的其他推送。
 - 实例用新类型前先查 `/v1/info`；遇到不认识的结果码按失败处理并显示 `message`。
 - 只有破坏兼容时才升协议版本（`protocol` 和路径里的 `v1`）。加类型、加字段、加结果码、加限额都不算。
 
-## 14. 日志
+## 11. 日志
 
 中继的日志只记：实例标识、追踪 `id`、设备令牌哈希的前 8 个十六进制字符、结果（和原因）。不记推送内容、不记完整令牌。官方部署保留 30 天。
 
-## 15. 测试向量
+## 12. 一致性测试
 
-`testvectors/instance-token.json` 是实例令牌的测试向量，也以 Go 包 `github.com/movieclaw/movieclaw-push/testvectors` 发布（`testvectors.InstanceToken`），签发方和中继各自用它验证自己的实现：
+`protocol/protocoltest` 是这份协议的一致性测试，以 Go 包发布：`protocoltest.NewAPNs` 起一个假的 APNs，`protocoltest.Run` 只通过 HTTP 调用被测中继，再到假 APNs 上核对苹果实际收到了什么。覆盖 `/v1/info` 的格式、鉴权失败、整批出错、第 5.3 节的每一步检查、第 8 节发给苹果的请求头和内容、苹果各种回应对应的结果码、`rate_limited` 和 `quota` 的格式。
 
-- `private_key_seed`：Ed25519 私钥种子（RFC 8032 第 7.1 节测试 1），`jwks` 是对应的公钥集；
-- `now`：验证时使用的当前时间；
-- `issue`：签发方的参考输出。签发方用这把密钥、在 `issue.claims.iat` 时刻签发 `issue.claims` 里的授权，得到的令牌头和声明必须和 `issue.header`、`issue.claims` 一致（JSON 语义一致，字段顺序不限），签名能用 `jwks` 验过；
-- `cases`：中继必须对每个令牌给出 `expect` 的结论（`ok`、`unauthorized`、`forbidden`），`ok` 时实例标识、账号、限额要和用例一致。用例覆盖：正常、`aud` 为数组、多个权限、没有 `lim`、过期、未生效、没有 `exp`、`aud` 不对、签发方不认识、没有 `sub`、`kid` 不认识、用错密钥、篡改声明、`alg: none`、用公钥做 HS256 密钥、缺少 `push` 权限、实例被吊销、账号被吊销。
-
-中继的测试：`go test ./internal/auth -run TestVectors`；改了向量要重新生成：`go test ./internal/auth -run TestVectors -update`。
+任何中继实现都应该跑通它。改协议时先改这份文档和一致性测试，再改实现。本实现的测试编译真实的程序对它跑：`go test ./cmd/movieclaw-push -run TestConformance`。

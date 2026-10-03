@@ -1,4 +1,4 @@
-# movieclaw-push 镜像。官方中继和自建用户用的是同一个镜像。
+# movieclaw-push 镜像，给自签 App 的用户自建推送中继。
 #
 #   docker build -t movieclaw-push .
 #   docker run -v $PWD/config.yaml:/etc/movieclaw-push/config.yaml \

@@ -1,7 +1,7 @@
 # movieclaw-push 自建部署示例（自签 App 用户）。
 #
 # 适用于用自己的开发者账号和 Bundle ID 打包 App 的用户：中继自己发令牌（static），
-# 推送用你自己的 .p8 密钥。官方部署的写法见 config.official.yaml。
+# 推送用你自己的 .p8 密钥。
 #
 # 相对路径都相对于这个文件所在的目录。
 

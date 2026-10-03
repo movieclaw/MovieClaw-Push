@@ -4,8 +4,9 @@ MovieClaw 的推送中继：把 MovieClaw 实例发来的**密文**推送转发�
 
 - **看不到内容**：推送内容在实例上端到端加密，中继只转发密文；明文里只允许控制类字段（角标、优先级……），任何能看出语义的文字都会被拒绝。
 - **不保存设备令牌、不保存推送内容**：没有数据库，只在本地 SQLite 里按「实例 × 天」记推送条数，用来执行限额。
-- **签发方宕机也不影响推送**：官方部署时，实例令牌由 MovieClaw 官方 api 签发、中继本地验签，公钥和吊销名单落盘缓存。
-- **官方中继 = 本仓库 + 官方配置 + 官方 .p8**，没有私有分支。用自己的开发者账号和 Bundle ID 打包 App 的用户，可以自己部署一个。
+- **协议公开，执行协议的代码共用**：MovieClaw 官方中继是另一份实现，但检查推送、拼出发给苹果的内容（也就是「只看得到密文」的执行点）
+  用的是本仓库的 `protocol` 包，两边都跑通同一套一致性测试（`protocol/protocoltest`）。
+- 用自己的开发者账号和 Bundle ID 打包 App 的用户，可以自己部署一个，不依赖 MovieClaw 的任何服务。
 
 协议：[docs/protocol.md](docs/protocol.md)。许可证：Apache-2.0。
 
@@ -53,7 +54,6 @@ MovieClaw 的推送中继：把 MovieClaw 实例发来的**密文**推送转发�
 | --- | --- | --- |
 | `static`（推荐） | 中继自己发的令牌 `mcpush_<ID>_<密钥>` | 绝大多数自建部署 |
 | `none` | 不带凭证，只按设备做每日限流 | 只在内网能访问的中继 |
-| `issuer` | 签发方签的 Ed25519 JWT（协议第 11、12 节） | 你自己运行了一个签发方 |
 
 `static` 令牌的管理：
 
@@ -65,11 +65,10 @@ MovieClaw 的推送中继：把 MovieClaw 实例发来的**密文**推送转发�
 
 1. **能推到哪个 App，由 .p8 决定，不由中继决定。** APNs 只接受 Bundle ID 所属开发者团队的密钥。自建中继只能推送你用自己的账号打包的 App。官方 App（`io.movieclaw.app`）的推送只能走官方中继，自建中继推不到它；反过来，官方中继也不推你的 Bundle ID（返回 `topic_not_allowed`）。
 2. **公网上不要用 `none`。** 知道地址的人都能用你的 .p8 往你的 App 推送，只有按设备的每日上限（`limits.device_day`）挡着。
-3. **`issuer` 模式不能直接信任 MovieClaw 官方 api。** 官方签发的令牌 `aud` 是官方中继，拉吊销名单还需要官方发给中继的专用密钥，自建中继拿不到。用 `issuer` 模式就得自己运行签发方。
-4. **管理接口默认关闭。** 不配 `admin.key_file` 时 `/admin/v1/usage` 返回 404，查计数用命令行 `movieclaw-push usage`。要开就用足够长的随机串，它能读到所有实例的推送计数。
-5. **HTTPS 交给反向代理。** 中继本身只说 HTTP，令牌是明文 Bearer，不经 HTTPS 暴露到公网等于公开令牌。`issuer` 模式下 `jwks`、`revocations` 也必须用 `https://`（中继不替你检查），否则公钥可能被中间人替换，任何人都能伪造令牌。
-6. **保护好数据目录和 .p8。** `data_dir` 里有令牌哈希和计数，.p8 能以你的身份向你的 App 推送；权限给 `600`/`700`，不要放进代码仓库。
-7. **限额先按默认值。** 每个令牌每天 5000 条、每台设备每天 500 条，覆盖正常使用绰绰有余；改成负数就是不限，出了问题没有兜底。
+3. **查计数用命令行。** `movieclaw-push usage` 按「实例 × 天」列出推送条数和失败原因，中继没有对外的管理接口。
+4. **HTTPS 交给反向代理。** 中继本身只说 HTTP，令牌是明文 Bearer，不经 HTTPS 暴露到公网等于公开令牌。
+5. **保护好数据目录和 .p8。** `data_dir` 里有令牌哈希和计数，.p8 能以你的身份向你的 App 推送；权限给 `600`/`700`，不要放进代码仓库。
+6. **限额先按默认值。** 每个令牌每天 5000 条、每台设备每天 500 条，覆盖正常使用绰绰有余；改成负数就是不限，出了问题没有兜底。
 
 ## 命令
 
@@ -88,31 +87,28 @@ version                    显示版本
 
 ## 配置
 
-两份完整示例：[examples/config.yaml](examples/config.yaml)（自建，`static` 鉴权）、[examples/config.official.yaml](examples/config.official.yaml)（官方，`issuer` 鉴权）。
+完整示例：[examples/config.yaml](examples/config.yaml)。
 
 | 配置 | 说明 |
 | --- | --- |
 | `listen` | 监听地址，默认 `:8080` |
-| `aud` | 中继的固定标识，issuer 模式下实例令牌的 `aud` 必须等于它 |
-| `data_dir` | 计数文件、令牌文件、鉴权缓存的目录，默认配置文件旁的 `data/` |
+| `aud` | 中继的固定标识，写进 `/v1/info` |
+| `data_dir` | 计数文件、令牌文件的目录，默认配置文件旁的 `data/` |
 | `apns.keys` | .p8 密钥（`team_id`、`key_id`、`file`），可以挂多把，第一把优先、被拒绝时自动换下一把 |
 | `apns.topics` | 能推送的基础 Bundle ID |
 | `apns.types` | 开放的推送类型，默认 `[alert]`；规则见协议第 6 节 |
 | `apns.rules` | 追加或覆盖推送类型规则（高级） |
 | `apns.alert_title` / `alert_body` | 中继替实例填的通用文案，默认「MovieClaw」「你有一条新通知」 |
 | `apns.dry_run` | 不连接苹果，直接返回成功并记日志（本地开发用） |
-| `auth.mode` | `issuer`、`static` 或 `none` |
-| `auth.issuers` | issuer 模式：受信任的签发方（`iss`、`jwks`、`revocations`、`key_file`） |
-| `auth.cache_dir` / `refresh_interval` | 公钥和吊销名单的落盘目录 / 拉取间隔（默认 5 分钟） |
-| `limits` | 默认限额：`day`（每个实例每天，默认 5000）、`device_day`（每台设备每天，默认 500），负数不限 |
-| `admin.key_file` | `/admin/v1/usage` 的管理密钥，不配则关闭该接口 |
+| `auth.mode` | `static` 或 `none` |
+| `limits` | 限额：`day`（每个令牌每天，默认 5000）、`device_day`（每台设备每天，默认 500），负数不限 |
 | `log.level` | `debug`、`info`、`warn`、`error` |
 
 ## 开发
 
 ```bash
-go test ./...                                          # 单元测试
-go test ./internal/auth -run TestVectors -update       # 重新生成令牌测试向量
+go test ./...                                              # 单元测试，含对编译出来的程序跑一致性测试
+go test ./cmd/movieclaw-push -run TestConformance -v       # 只跑一致性测试
 ```
 
 | 目录 | 内容 |
@@ -121,8 +117,7 @@ go test ./internal/auth -run TestVectors -update       # 重新生成令牌测�
 | `protocol` | 协议里可以直接执行的部分：消息格式、逐条检查、推送类型规则表、aps 允许清单、结果码（公开的 Go 包） |
 | `protocol/protocoltest` | 协议一致性测试和假 APNs：任何中继实现都应该跑通（`cmd/movieclaw-push` 的测试对编译出来的程序跑它） |
 | `apns` | 标准库 HTTP/2 写的 APNs 客户端（公开的 Go 包） |
-| `internal/auth` | issuer / static / none 三种鉴权 |
+| `internal/auth` | static / none 两种鉴权 |
 | `internal/limit` | 限额与计数（SQLite、HyperLogLog） |
 | `internal/server` | HTTP 接口：鉴权 → 按协议检查 → 限额 → 发给苹果 |
 | `docs/protocol.md` | 推送中继协议 |
-| `testvectors` | 实例令牌测试向量（公开的 Go 包），签发方用它核对自己的实现 |

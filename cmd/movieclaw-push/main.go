@@ -1,7 +1,7 @@
 // movieclaw-push 是 MovieClaw 的推送中继：把实例发来的密文推送转发给 APNs。
 //
-// 它看不到推送内容，不知道手机属于谁，也不保存设备令牌。官方中继和自建中继是同一份
-// 代码，差别只在配置。用法：
+// 它看不到推送内容，不知道手机属于谁，也不保存设备令牌。给用自己的开发者账号打包 App
+// 的用户自建；协议（docs/protocol.md）是公开的，执行协议的部分在 protocol 包里。用法：
 //
 //	movieclaw-push [-config config.yaml] [命令]
 //
@@ -125,23 +125,6 @@ func serve(configPath string) error {
 
 	var authn auth.Authenticator
 	switch cfg.Auth.Mode {
-	case config.ModeIssuer:
-		var issuers []auth.IssuerConfig
-		for _, is := range cfg.Auth.Issuers {
-			ic := auth.IssuerConfig{Iss: is.Iss, JWKS: is.JWKS, Revocations: is.Revocations}
-			if is.KeyFile != "" {
-				if ic.Key, err = config.ReadSecret(is.KeyFile); err != nil {
-					return err
-				}
-			}
-			issuers = append(issuers, ic)
-		}
-		iss, err := auth.NewIssuer(cfg.Aud, issuers, cfg.Auth.CacheDir, cfg.Auth.RefreshInterval, log)
-		if err != nil {
-			return err
-		}
-		go iss.Run(ctx)
-		authn = iss
 	case config.ModeStatic:
 		authn = auth.NewStatic(tokensPath(cfg))
 	case config.ModeNone:
@@ -160,13 +143,6 @@ func serve(configPath string) error {
 	}
 	go limiter.Run(ctx)
 
-	var adminKey string
-	if cfg.Admin.KeyFile != "" {
-		if adminKey, err = config.ReadSecret(cfg.Admin.KeyFile); err != nil {
-			return err
-		}
-	}
-
 	srv := server.New(server.Options{
 		Aud:      cfg.Aud,
 		Checker:  protocol.NewChecker(cfg.APNs.Topics, table),
@@ -174,7 +150,6 @@ func serve(configPath string) error {
 		Limiter:  limiter,
 		Sender:   sender,
 		Defaults: cfg.Limits,
-		AdminKey: adminKey,
 		Version:  version,
 		Log:      log,
 	})

@@ -2,10 +2,9 @@
 
 欢迎提 Issue 和 PR。
 
-- **改协议先开 Issue 讨论**：[docs/protocol.md](docs/protocol.md) 是实例、签发方、中继三方共同遵守的契约，
-  加字段、加类型、加结果码都不能让已经装好的老版本实例出错。
-- **提交前**：`go vet ./... && go test -race ./...`。改了令牌格式要重新生成测试向量：
-  `go test ./internal/auth -run TestVectors -update`。
+- **改协议先开 Issue 讨论**：[docs/protocol.md](docs/protocol.md) 是实例和所有中继实现共同遵守的契约，
+  加字段、加类型、加结果码都不能让已经装好的老版本实例出错。改协议要同时改一致性测试（`protocol/protocoltest`）。
+- **提交前**：`go vet ./... && go test -race ./...`（会编译真实的程序跑一致性测试）。
 - **PR 怎么合并**：这个仓库的 `main` 由我们的内部仓库同步生成。PR 评审通过后，我们把你的提交引入内部仓库
   （作者仍然是你），同步回 `main` 后关闭 PR，并附上合并后的提交链接。所以 PR 会显示 Closed 而不是 Merged，这是正常的。
 - 安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。

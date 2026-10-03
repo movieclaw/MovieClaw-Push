@@ -3,8 +3,8 @@
 // 限额只基于中继自己能核实的维度（条数、类型、优先级、设备数），不依赖实例自报的信息。
 // 两类计数分开存放：
 //   - 按设备的计数（每台设备每天几条，覆盖所有实例）只放内存，重启清零可以接受；
-//   - 按「实例 × 天」的汇总写进本地 SQLite（usage.db），api 每小时通过 /admin/v1/usage
-//     拉走，本地保留 7 天。汇总里只有数字：不存设备令牌，也不存令牌哈希。
+//   - 按「实例 × 天」的汇总写进本地 SQLite（usage.db），用 movieclaw-push usage 查看，
+//     本地保留 7 天。汇总里只有数字：不存设备令牌，也不存令牌哈希。
 //
 // 日界按 UTC 划分，限额在 UTC 零点（北京时间 8:00）重置。
 package limit
@@ -36,7 +36,7 @@ type Attempt struct {
 
 // Denial 是超出限额。
 type Denial struct {
-	// Limit 是触发的限制名，和令牌里 lim 的键一致，如 day、device_day。
+	// Limit 是触发的限制名，和配置里 limits 的键一致，如 day、device_day。
 	Limit      string
 	Max        int64
 	RetryAfter time.Duration
@@ -69,7 +69,7 @@ func newStats(instance, day string) *Stats {
 	}
 }
 
-// DayUsage 是 /admin/v1/usage 返回的一行：一个实例一天的汇总。
+// DayUsage 是一个实例一天的汇总，movieclaw-push usage 按它显示。
 type DayUsage struct {
 	Instance     string           `json:"instance"`
 	Day          string           `json:"day"`
@@ -130,17 +130,17 @@ func New(defaults map[string]int64, store *Store, log *slog.Logger, now time.Tim
 }
 
 // Admit 检查一条推送是否超出限额；没超出就计入（发给苹果之前计入，并发请求也超不过上限）。
-// lim 是令牌里的限额表，没有的键用配置的默认值；负数表示不限。instance 为空（none 模式）
+// 限额来自配置的 limits，负数表示不限。instance 为空（none 模式）
 // 时不检查实例限额，只检查设备限额。
-func (l *Limiter) Admit(instance string, lim map[string]int64, a Attempt, now time.Time) *Denial {
+func (l *Limiter) Admit(instance string, a Attempt, now time.Time) *Denial {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.rollover(now)
 	st := l.statsFor(instance)
-	if limit, ok := l.limit(lim, "day"); ok && instance != "" && st.Count >= limit {
+	if limit, ok := l.limit("day"); ok && instance != "" && st.Count >= limit {
 		return deny("day", limit, now, "这台实例今天的推送已达上限（%d 条）")
 	}
-	if limit, ok := l.limit(lim, "device_day"); ok && l.devices[a.Device] >= limit {
+	if limit, ok := l.limit("device_day"); ok && l.devices[a.Device] >= limit {
 		return deny("device_day", limit, now, "这台设备今天收到的推送已达上限（%d 条）")
 	}
 	l.devices[a.Device]++
@@ -167,8 +167,8 @@ func (l *Limiter) Fail(instance, reason string, now time.Time) {
 }
 
 // Quota 返回实例的剩余额度；none 模式或不限额时返回 nil。
-func (l *Limiter) Quota(instance string, lim map[string]int64, now time.Time) map[string]protocol.Quota {
-	limit, ok := l.limit(lim, "day")
+func (l *Limiter) Quota(instance string, now time.Time) map[string]protocol.Quota {
+	limit, ok := l.limit("day")
 	if instance == "" || !ok {
 		return nil
 	}
@@ -179,14 +179,6 @@ func (l *Limiter) Quota(instance string, lim map[string]int64, now time.Time) ma
 	return map[string]protocol.Quota{"day": {
 		Limit: limit, Used: used, Remaining: max(0, limit-used), ResetAt: nextDay(now).Unix(),
 	}}
-}
-
-// Usage 返回从 since（含）起的按天汇总，先把内存里的计数写盘。
-func (l *Limiter) Usage(since string) ([]DayUsage, error) {
-	if err := l.Flush(); err != nil {
-		return nil, err
-	}
-	return l.store.Since(since)
 }
 
 // Flush 把有变化的汇总写进 SQLite，并从内存里去掉已经写完的旧日汇总。
@@ -261,11 +253,8 @@ func (l *Limiter) statsFor(instance string) *Stats {
 	return st
 }
 
-func (l *Limiter) limit(lim map[string]int64, name string) (int64, bool) {
-	v, ok := lim[name]
-	if !ok {
-		v, ok = l.defaults[name]
-	}
+func (l *Limiter) limit(name string) (int64, bool) {
+	v, ok := l.defaults[name]
 	return v, ok && v >= 0
 }
 

@@ -41,7 +41,7 @@ func (s *Server) push(w http.ResponseWriter, r *http.Request) {
 
 	// 带上剩余额度，实例快到上限时可以主动取舍：优先发 alert，静默推送和实时活动可以丢
 	protocol.WriteJSON(w, http.StatusOK, protocol.Response{
-		Results: results, Quota: s.opts.Limiter.Quota(p.Instance, p.Limits, s.now()),
+		Results: results, Quota: s.opts.Limiter.Quota(p.Instance, s.now()),
 	})
 }
 
@@ -53,7 +53,7 @@ func (s *Server) deliver(ctx context.Context, p *auth.Principal, raw json.RawMes
 		return s.finish(ctx, p, prep, *rejected)
 	}
 	attempt := limit.Attempt{Device: prep.Device, Type: prep.Type, Priority: prep.Priority, Interruption: prep.Interruption}
-	if d := s.opts.Limiter.Admit(p.Instance, p.Limits, attempt, now); d != nil {
+	if d := s.opts.Limiter.Admit(p.Instance, attempt, now); d != nil {
 		return s.finish(ctx, p, prep, protocol.RateLimited(prep.ID, d.Limit, d.RetryAfter, d.Message))
 	}
 	resp, err := s.opts.Sender.Push(ctx, prep.Notification)
