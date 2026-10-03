@@ -1,6 +1,6 @@
 // Package server 是推送中继的 HTTP 接口，协议见 docs/protocol.md。
 //
-//	GET  /v1/info   协议版本、aud、能推送的 Bundle ID、开放的类型、鉴权方式、默认限额
+//	GET  /v1/info   协议版本、aud、能推送的 Bundle ID、开放的类型、鉴权方式、默认限额；带凭证时还有剩余额度
 //	POST /v1/push   批量推送，一次最多 100 条，每条单独返回结果
 //	GET  /healthz   健康检查
 //
@@ -57,9 +57,15 @@ func (s *Server) Handler() http.Handler {
 	return s.accessLog(mux)
 }
 
-func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
-	protocol.WriteJSON(w, http.StatusOK,
-		s.opts.Checker.Info("movieclaw-push/"+s.opts.Version, s.opts.Aud, s.opts.Auth.Info(), s.opts.Defaults))
+// info 带了有效凭证时附上调用方的剩余额度；凭证无效也照常返回，实例在凭证过期时仍要读得到鉴权方式。
+func (s *Server) info(w http.ResponseWriter, r *http.Request) {
+	info := s.opts.Checker.Info("movieclaw-push/"+s.opts.Version, s.opts.Aud, s.opts.Auth.Info(), s.opts.Defaults)
+	if bearer := protocol.Bearer(r); bearer != "" {
+		if p, err := s.opts.Auth.Authenticate(r.Context(), bearer); err == nil {
+			info.Quota = s.opts.Limiter.Quota(p.Instance, s.now())
+		}
+	}
+	protocol.WriteJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {

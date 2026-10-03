@@ -139,6 +139,7 @@ func Run(t *testing.T, tg Target) {
 	}
 	c := &client{t: t, tg: tg, http: &http.Client{Timeout: 30 * time.Second}}
 	t.Run("info", c.info)
+	t.Run("info 带凭证", c.infoWithCredential)
 	t.Run("healthz", c.healthz)
 	t.Run("鉴权", c.auth)
 	t.Run("请求格式", c.requestErrors)
@@ -294,6 +295,41 @@ func (c *client) info(t *testing.T) {
 	if _, ok := info["limits"].(map[string]any); !ok {
 		t.Errorf("limits 应是对象：%v", info["limits"])
 	}
+	if _, ok := info["quota"]; ok {
+		t.Errorf("不带凭证时不应有 quota：%v", info["quota"])
+	}
+}
+
+// infoWithCredential 核对 /v1/info 带凭证时的行为：有效凭证多一个 quota；无效凭证照常返回、没有 quota。
+func (c *client) infoWithCredential(t *testing.T) {
+	if c.tg.Token == "" {
+		t.Skip("none 模式不鉴权")
+	}
+	status, info := c.do(t, "GET", "/v1/info", "garbage", nil)
+	if status != http.StatusOK || info["protocol"] != float64(1) {
+		t.Fatalf("凭证无效时 /v1/info 仍应返回 200 和完整的信息，实际 %d：%v", status, info)
+	}
+	if _, ok := info["quota"]; ok {
+		t.Errorf("凭证无效时不应有 quota：%v", info["quota"])
+	}
+	status, info = c.do(t, "GET", "/v1/info", c.tg.Token, nil)
+	if status != http.StatusOK || info["protocol"] != float64(1) {
+		t.Fatalf("带有效凭证时 /v1/info 应返回 200，实际 %d：%v", status, info)
+	}
+	if q, ok := info["quota"]; ok {
+		checkQuota(t, q)
+	}
+	if c.tg.LimitedToken == "" {
+		return
+	}
+	// 零额度的凭证一定有 quota：限额生效，就要能在 /v1/info 里看到
+	status, info = c.doAt(t, c.tg.LimitedURL, "GET", "/v1/info", c.tg.LimitedToken, nil)
+	q, _ := info["quota"].(map[string]any)
+	day, _ := q["day"].(map[string]any)
+	if status != http.StatusOK || day["limit"] != float64(0) || day["remaining"] != float64(0) {
+		t.Errorf("零额度的凭证调 /v1/info 应带 quota.day（limit 0、remaining 0），实际 %d：%v", status, info["quota"])
+	}
+	checkQuota(t, info["quota"])
 }
 
 func (c *client) healthz(t *testing.T) {

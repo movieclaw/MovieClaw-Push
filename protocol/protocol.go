@@ -118,6 +118,8 @@ type Info struct {
 	Limits          map[string]int64 `json:"limits"`
 	MaxBatch        int              `json:"max_batch"`
 	MaxPayloadBytes int              `json:"max_payload_bytes"`
+	// Quota 是调用方的剩余额度，只在请求带了有效凭证、而且有限额时才有。
+	Quota map[string]Quota `json:"quota,omitempty"`
 }
 
 // DeviceKey 是设备令牌（小写）的 SHA-256。中继只在内存里用它按设备计数，日志只记前 4 字节。
